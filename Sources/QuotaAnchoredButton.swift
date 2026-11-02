@@ -17,14 +17,15 @@ private enum QuotaButtonProfile {
     static let topInset: CGFloat = 538
     static let centerFromWindowTop: CGFloat = 560
     static let nativeRowPitch: CGFloat = 52.75
-    static let glyphSize: CGFloat = 20
+    // The 24-point canvas gives the inset vector an approximately 20-point visible outline.
+    static let glyphSize: CGFloat = 24
     static let minimumWindowSize = CGSize(width: 900, height: 700)
     #if !QUOTA_ANCHORED_TESTING
-    // Exact installed host identity checked from /Applications/ChatGPT.app/Contents/Info.plist on 2026-11-02.
+    // Exact installed host identity checked from /Applications/ChatGPT.app/Contents/Info.plist on 2026-11-02 after the Codex update.
     // The anchored button profile is enabled only for this host bundle/build/version.
-    static let supportedHostBuildVersion = "23880"
-    static let supportedHostShortVersion = "26.1027.51404"
-    static let supportedHostInfoPlistSHA256 = "7a3920d56d052cdf4bf803a92e2098be015eaf9263589d51e04ac4121f16eed7"
+    static let supportedHostBuildVersion = "24141"
+    static let supportedHostShortVersion = "26.1027.61615"
+    static let supportedHostInfoPlistSHA256 = "fb72c75a6cabb64f05420aef782b2d6ac86269a6c5557a75dabfa796905ee6ef"
     #endif
 }
 
@@ -293,26 +294,6 @@ private enum QuotaHostWindowLocator {
 }
 
 @MainActor
-private struct QuotaAnchorButtonView: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "gauge.with.dots.needle.33percent")
-                .font(.system(size: QuotaButtonProfile.glyphSize, weight: .regular))
-                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
-                .frame(width: QuotaButtonProfile.buttonSize.width, height: QuotaButtonProfile.buttonSize.height)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .frame(width: QuotaButtonProfile.buttonSize.width, height: QuotaButtonProfile.buttonSize.height)
-        .contentShape(Rectangle())
-        .accessibilityLabel("额度")
-        .help("额度")
-    }
-}
-
-@MainActor
 private final class QuotaAnchorPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
@@ -463,7 +444,7 @@ private final class QuotaAnchoredButtonController: NSObject, NSWindowDelegate, N
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false
-        panel.contentView = NSHostingView(rootView: QuotaAnchorButtonView { [weak self] in self?.toggleDetails() })
+        panel.contentView = NSHostingView(rootView: QuotaAnchorButtonView(model: model) { [weak self] in self?.toggleDetails() })
         buttonPanel = panel
     }
 

@@ -20,7 +20,11 @@ Codex 额度仪表 · A lightweight macOS companion for Codex with quota details
 
 ## 当前状态
 
-截至 **2026-11-02**，最新本机验收记录为 **a1-c28**：用户已确认两类额度和每条明细的倒计时、完整日期、外点关闭及重开正常。格式边界、生产详情视图测量、请求计数、构建输入和签名的独立核对见 [验证说明](docs/VALIDATION.md)。
+截至 **2026-11-02**，最新本机验收记录为 **a1-c32**：Codex更新至build 24141后，旧版额度App因版本保护隐藏按钮；c32适配当前宿主，用户确认“按钮恢复，交互正常”，覆盖按钮恢复、位置和详情打开、外点关闭及重开。
+
+此前 **a1-c31** 已记录用户确认“当前档位正确，其他正常”。70%/20%/0%阈值、同一按钮后台更新、四档组件位图、输入和签名独立检查通过；该人工反馈只覆盖当时真实档位，四档仍以合成验证为依据。c32仅更新宿主身份配置及相邻注释，其余九份产品输入保持一致。
+
+此前 **a1-c28** 已记录用户对两类额度和每条明细的倒计时、完整日期、外点关闭及重开正常的确认。格式边界、生产详情视图测量、请求计数、构建输入和签名的独立核对见 [验证说明](docs/VALIDATION.md)。
 
 此结论覆盖记录中的本机环境。真实账号实际到期事件、跨显示器、睡眠与唤醒、深色模式和实体长内容滚动没有新增完整验收；时钟推进和请求计数使用合成数据验证。项目仍以本机构建候选交付，没有完成面向公众发布的完整验证。
 
@@ -33,8 +37,8 @@ Codex 额度仪表 · A lightweight macOS companion for Codex with quota details
 | 系统与架构 | macOS 14.0 及以上，Apple Silicon；脚本目标为 `arm64-apple-macosx14.0` |
 | 构建工具 | 提供 `xcrun swiftc`、macOS SDK 和 `codesign` 的 Xcode / Command Line Tools |
 | 宿主 Bundle ID | `com.openai.codex` |
-| 源码支持的宿主版本 | `26.1027.51404`，build `23880` |
-| 宿主 Info.plist SHA-256 配置值 | `7a3920d56d052cdf4bf803a92e2098be015eaf9263589d51e04ac4121f16eed7` |
+| 源码支持的宿主版本 | `26.1027.61615`，build `24141` |
+| 宿主 Info.plist SHA-256 配置值 | `fb72c75a6cabb64f05420aef782b2d6ac86269a6c5557a75dabfa796905ee6ef` |
 | 窗口条件 | 单个可见标准主窗口，至少 `900 × 700 pt`，按钮处于屏幕可见区域 |
 | 数据前提 | 固定路径下的随应用打包 CLI 可用、签名校验通过，并已登录可读取额度的账号 |
 
@@ -78,9 +82,9 @@ shasum -a 256 "$HOST_INFO"
 ```bash
 QUOTA_BUTTON_REVISION=a1-c29 \
 QUOTA_BUTTON_PROFILE_HOST_BUNDLE_IDENTIFIER=com.openai.codex \
-QUOTA_BUTTON_PROFILE_HOST_BUILD_VERSION=23880 \
-QUOTA_BUTTON_PROFILE_HOST_SHORT_VERSION=26.1027.51404 \
-QUOTA_BUTTON_PROFILE_HOST_INFO_PLIST_SHA256=7a3920d56d052cdf4bf803a92e2098be015eaf9263589d51e04ac4121f16eed7 \
+QUOTA_BUTTON_PROFILE_HOST_BUILD_VERSION=24141 \
+QUOTA_BUTTON_PROFILE_HOST_SHORT_VERSION=26.1027.61615 \
+QUOTA_BUTTON_PROFILE_HOST_INFO_PLIST_SHA256=fb72c75a6cabb64f05420aef782b2d6ac86269a6c5557a75dabfa796905ee6ef \
 bash scripts/build-anchored-quota-button-a1-c1.sh
 ```
 
@@ -101,6 +105,8 @@ open 'build/anchored-quota-button/revisions/a1-c29/candidates/QuotaButton.app'
 ```
 
 ### 图标
+
+侧栏额度按钮使用已确认的「开口额度环＋三级刻度」单色矢量图标，由 SwiftUI `Shape` 直接绘制；画布为24 pt，实际可见轮廓约20 pt，使用系统次要标签色，点击区域为44 × 44 pt。矢量设计源文件为 `Resources/SidebarQuotaIcon.svg`。
 
 正式 App 使用已选定的“暖白底＋橙金阶梯刻度”图标。构建会复制 `Resources/AppIcon.icns`、写入 `CFBundleIconFile` 后签名；资源缺失时会停止构建。
 

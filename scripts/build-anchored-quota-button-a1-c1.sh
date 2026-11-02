@@ -17,6 +17,7 @@ FRAMEWORKS=(-framework AppKit -framework SwiftUI -framework CoreGraphics)
 BUTTON_SOURCES=(
   "${PROJECT_ROOT}/Sources/QuotaWindowLayout.swift"
   "${PROJECT_ROOT}/Sources/QuotaCountdown.swift"
+  "${PROJECT_ROOT}/Sources/QuotaSidebarGlyph.swift"
   "${PROJECT_ROOT}/Sources/QuotaRealData.swift"
   "${PROJECT_ROOT}/Sources/QuotaRealProvider.swift"
   "${PROJECT_ROOT}/Sources/QuotaRealModel.swift"
