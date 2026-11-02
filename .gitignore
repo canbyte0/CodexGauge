@@ -1,0 +1,51 @@
+# macOS and editor state
+.DS_Store
+._*
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build products, caches, and runtime output
+/build/
+/.build/
+/DerivedData/
+/.swiftpm/
+*.app/
+*.dSYM/
+*.dmg
+*.pkg
+*.xcarchive/
+*.xcuserstate
+xcuserdata/
+**/module-cache*/
+**/build-temp/
+**/runtime/
+*.log
+*.pid
+*.tmp
+__pycache__/
+*.py[cod]
+
+# Local design exports and historical acceptance evidence
+/output/
+/docs/*
+!/docs/ARCHITECTURE.md
+!/docs/VALIDATION.md
+
+# Local agent settings and credentials
+/.codex/
+/.agents/
+.env
+.env.*
+!.env.example
+auth.json
+credentials*.json
+token*.json
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
