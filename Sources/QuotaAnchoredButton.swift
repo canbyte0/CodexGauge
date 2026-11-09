@@ -10,22 +10,20 @@ private enum QuotaButtonProfile {
     static let hostBundleIdentifier = "com.openai.codex"
     #endif
 
-    // Candidate profile derived from the user's 2026-10-29 top-navigation reference.
+    // Candidate profile derived from the user's 2026-11-04 bottom-navigation reference.
     // The outer button frame is expressed in AppKit screen points from the host frame.
     static let buttonSize = CGSize(width: 44, height: 44)
-    static let leftInset: CGFloat = 9
-    static let topInset: CGFloat = 538
-    static let centerFromWindowTop: CGFloat = 560
+    static let leftInset: CGFloat = 9.5
+    static let centerFromWindowBottom: CGFloat = 136.0
     static let nativeRowPitch: CGFloat = 52.75
-    // The 24-point canvas gives the inset vector an approximately 20-point visible outline.
-    static let glyphSize: CGFloat = 24
+    // The 36-point render canvas scales the 24-unit paths to a 28.8-point visible outline.
+    static let glyphSize: CGFloat = QuotaSidebarGlyphGeometry.renderSize
+    static var visibleGlyphDiameter: CGFloat { glyphSize * 18 / 24 + QuotaSidebarGlyphGeometry.lineWidth }
     static let minimumWindowSize = CGSize(width: 900, height: 700)
     #if !QUOTA_ANCHORED_TESTING
-    // Exact installed host identity checked from /Applications/ChatGPT.app/Contents/Info.plist on 2026-11-02 after the Codex update.
-    // The anchored button profile is enabled only for this host bundle/build/version.
-    static let supportedHostBuildVersion = "24141"
-    static let supportedHostShortVersion = "26.1027.61615"
-    static let supportedHostInfoPlistSHA256 = "fb72c75a6cabb64f05420aef782b2d6ac86269a6c5557a75dabfa796905ee6ef"
+    static var hostCompatibility: Result<QuotaHostCompatibilityConfiguration, Error> = .failure(
+        QuotaHostCompatibilityError.invalidConfiguration("host compatibility has not been prepared for this app session")
+    )
     #endif
 }
 
@@ -40,7 +38,7 @@ private struct QuotaHostAnchor {
     var buttonFrame: CGRect {
         CGRect(
             x: appKitFrame.minX + QuotaButtonProfile.leftInset,
-            y: appKitFrame.maxY - QuotaButtonProfile.topInset - QuotaButtonProfile.buttonSize.height,
+            y: appKitFrame.minY + QuotaButtonProfile.centerFromWindowBottom - QuotaButtonProfile.buttonSize.height / 2,
             width: QuotaButtonProfile.buttonSize.width,
             height: QuotaButtonProfile.buttonSize.height
         )
@@ -98,21 +96,19 @@ private enum QuotaHostWindowLocator {
     #if !QUOTA_ANCHORED_TESTING
     private static func locateProductionHost(_ application: NSRunningApplication) -> Result<QuotaHostAnchor, QuotaHostAnchorFailure> {
         guard application.bundleIdentifier == QuotaButtonProfile.hostBundleIdentifier,
-              let bundleURL = application.bundleURL,
-              let hostInfo = Bundle(url: bundleURL)?.infoDictionary,
-              let hostBuild = hostInfo["CFBundleVersion"] as? String,
-              let hostShortVersion = hostInfo["CFBundleShortVersionString"] as? String,
-              let candidateInfo = Bundle.main.infoDictionary,
-              let profileBundleID = candidateInfo["QuotaHostProfileBundleIdentifier"] as? String,
-              let profileBuild = candidateInfo["QuotaHostProfileBuildVersion"] as? String,
-              let profileShortVersion = candidateInfo["QuotaHostProfileShortVersion"] as? String,
-              let profileInfoPlistSHA256 = candidateInfo["QuotaHostProfileInfoPlistSHA256"] as? String,
-              hostBuild == QuotaButtonProfile.supportedHostBuildVersion,
-              hostShortVersion == QuotaButtonProfile.supportedHostShortVersion,
-              profileBundleID == QuotaButtonProfile.hostBundleIdentifier,
-              profileBuild == QuotaButtonProfile.supportedHostBuildVersion,
-              profileShortVersion == QuotaButtonProfile.supportedHostShortVersion,
-              profileInfoPlistSHA256 == QuotaButtonProfile.supportedHostInfoPlistSHA256
+              let bundleURL = application.bundleURL
+        else { return .failure(.unsupportedHostBuild) }
+        let identity: QuotaHostIdentity
+        do {
+            identity = try QuotaHostIdentity.read(
+                from: bundleURL.appendingPathComponent("Contents/Info.plist", isDirectory: false)
+            )
+        } catch {
+            return .failure(.unsupportedHostBuild)
+        }
+        guard identity.bundleIdentifier == QuotaButtonProfile.hostBundleIdentifier,
+              case .success(let compatibility) = QuotaButtonProfile.hostCompatibility,
+              compatibility.allows(identity)
         else { return .failure(.unsupportedHostBuild) }
 
         guard let rawWindows = CGWindowListCopyWindowInfo(
@@ -134,12 +130,21 @@ private enum QuotaHostWindowLocator {
         }
 
         guard !ownedVisibleWindows.isEmpty else { return .failure(.noWindow) }
-        // Count all visible layer-zero windows first, including small settings and modal windows.
-        guard ownedVisibleWindows.count == 1 else { return .failure(.ambiguousWindows) }
-        guard let (windowNumber, quartzBounds) = ownedVisibleWindows.first,
-              quartzBounds.width >= QuotaButtonProfile.minimumWindowSize.width,
-              quartzBounds.height >= QuotaButtonProfile.minimumWindowSize.height,
-              let (appKitFrame, screen) = convertToAppKit(quartzBounds),
+        let selectedIndex: Int
+        switch QuotaWindowCandidateSelector.select(
+            frames: ownedVisibleWindows.map { $0.1 },
+            minimumSize: QuotaButtonProfile.minimumWindowSize
+        ) {
+        case .none:
+            return .failure(.screenMappingUnavailable)
+        case .ambiguous:
+            return .failure(.ambiguousWindows)
+        case .unique(let index):
+            selectedIndex = index
+        }
+        guard ownedVisibleWindows.indices.contains(selectedIndex) else { return .failure(.invalidGeometry) }
+        let (windowNumber, quartzBounds) = ownedVisibleWindows[selectedIndex]
+        guard let (appKitFrame, screen) = convertToAppKit(quartzBounds),
               appKitFrame.width >= QuotaButtonProfile.minimumWindowSize.width,
               appKitFrame.height >= QuotaButtonProfile.minimumWindowSize.height
         else { return .failure(.screenMappingUnavailable) }
@@ -181,9 +186,21 @@ private enum QuotaHostWindowLocator {
             ($0["visible"] as? Bool ?? false) && !($0["miniaturized"] as? Bool ?? false)
         }
         guard !visibleWindows.isEmpty else { return .failure(.noWindow) }
-        guard visibleWindows.count == 1, let row = visibleWindows.first,
-              row["main"] as? Bool == true
-        else { return .failure(.ambiguousWindows) }
+        let selectedIndex: Int
+        switch QuotaWindowCandidateSelector.select(
+            frames: visibleWindows.map { appKitRect($0) ?? .null },
+            minimumSize: QuotaButtonProfile.minimumWindowSize
+        ) {
+        case .none:
+            return .failure(.invalidGeometry)
+        case .ambiguous:
+            return .failure(.ambiguousWindows)
+        case .unique(let index):
+            selectedIndex = index
+        }
+        guard visibleWindows.indices.contains(selectedIndex) else { return .failure(.invalidGeometry) }
+        let row = visibleWindows[selectedIndex]
+        guard row["main"] as? Bool == true else { return .failure(.ambiguousWindows) }
         guard row["railVisible"] as? Bool == true else { return .failure(.mockHostRailHidden) }
         guard let windowNumber = cgWindowNumber(row["windowNumber"]),
               let appKitFrame = appKitRect(row),
@@ -270,7 +287,7 @@ private enum QuotaHostWindowLocator {
             guard scaleX.isFinite, scaleY.isFinite, scaleX > 0, scaleY > 0 else { continue }
             let quartzButton = CGRect(
                 x: rect.minX + QuotaButtonProfile.leftInset * scaleX,
-                y: rect.minY + QuotaButtonProfile.topInset * scaleY,
+                y: rect.maxY - (QuotaButtonProfile.centerFromWindowBottom + QuotaButtonProfile.buttonSize.height / 2) * scaleY,
                 width: QuotaButtonProfile.buttonSize.width * scaleX,
                 height: QuotaButtonProfile.buttonSize.height * scaleY
             )
@@ -345,6 +362,10 @@ private final class QuotaAnchoredButtonController: NSObject, NSWindowDelegate, N
             Task { @MainActor in self?.refreshAnchor() }
         }
         timer?.tolerance = 0.05
+        refreshAnchor()
+    }
+
+    func refreshPositionAfterCompatibilityReopen() {
         refreshAnchor()
     }
 
@@ -627,8 +648,12 @@ private final class QuotaAnchoredButtonController: NSObject, NSWindowDelegate, N
               panel.alphaValue < 1 else { return }
         guard let anchor = latestAnchor else { return }
         let chromeHeight = max(0, panel.frame.height - (panel.contentView?.bounds.height ?? 0))
-        let availableHeight = max(1, anchor.screen.visibleFrame.height - chromeHeight)
-        let fallbackHeight = min(QuotaWindowLayout.detailsMeasurementFallbackContentHeight, availableHeight)
+        let fallbackHeight = QuotaWindowLayout.anchoredDetailsContentHeight(
+            naturalContentHeight: QuotaWindowLayout.detailsMeasurementFallbackContentHeight,
+            windowChromeHeight: chromeHeight,
+            alignedBottomY: detailsAlignedBottomY(for: anchor.buttonFrame),
+            visibleFrameMaxY: anchor.screen.visibleFrame.maxY
+        ) ?? 1
         if abs((effectiveDetailsContentHeight ?? 0) - fallbackHeight) > 0.5 {
             effectiveDetailsContentHeight = fallbackHeight
             panel.setContentSize(CGSize(width: QuotaWindowLayout.detailsContentSize.width, height: fallbackHeight))
@@ -646,12 +671,21 @@ private final class QuotaAnchoredButtonController: NSObject, NSWindowDelegate, N
     }
 
     private func positionDetailsPanel(_ panel: NSWindow, beside buttonFrame: CGRect, screen: NSScreen) {
+        let desiredContentHeight: CGFloat?
         if let naturalDetailsContentHeight {
+            desiredContentHeight = naturalDetailsContentHeight
+        } else if effectiveDetailsContentHeight != nil {
+            desiredContentHeight = QuotaWindowLayout.detailsMeasurementFallbackContentHeight
+        } else {
+            desiredContentHeight = nil
+        }
+        if let desiredContentHeight {
             let chromeHeight = max(0, panel.frame.height - (panel.contentView?.bounds.height ?? 0))
             if let constrainedHeight = QuotaWindowLayout.anchoredDetailsContentHeight(
-                naturalContentHeight: naturalDetailsContentHeight,
+                naturalContentHeight: desiredContentHeight,
                 windowChromeHeight: chromeHeight,
-                visibleFrameHeight: screen.visibleFrame.height
+                alignedBottomY: detailsAlignedBottomY(for: buttonFrame),
+                visibleFrameMaxY: screen.visibleFrame.maxY
             ), abs((effectiveDetailsContentHeight ?? 0) - constrainedHeight) > 0.5 {
                 effectiveDetailsContentHeight = constrainedHeight
                 panel.setContentSize(CGSize(width: QuotaWindowLayout.detailsContentSize.width, height: constrainedHeight))
@@ -662,10 +696,15 @@ private final class QuotaAnchoredButtonController: NSObject, NSWindowDelegate, N
         let outerSize = panel.frameRect(forContentRect: CGRect(origin: .zero, size: contentSize)).size
         let placement = QuotaWindowLayout.anchoredDetailsFrame(
             buttonFrame: buttonFrame,
+            alignedBottomY: detailsAlignedBottomY(for: buttonFrame),
             outerSize: outerSize,
             visibleFrame: screen.visibleFrame
         )
         setFrameIfNeeded(placement.frame, for: panel)
+    }
+
+    private func detailsAlignedBottomY(for buttonFrame: CGRect) -> CGFloat {
+        buttonFrame.midY - QuotaButtonProfile.visibleGlyphDiameter / 2
     }
 
     private func setFrameIfNeeded(_ frame: CGRect, for window: NSWindow) {
@@ -742,6 +781,7 @@ private final class QuotaButtonAppDelegate: NSObject, NSApplicationDelegate {
             let log = try QuotaButtonRuntimeLog()
             runtimeLog = log
             log.writePID(pid_t(ProcessInfo.processInfo.processIdentifier))
+            prepareHostCompatibility(source: "cold-start")
             let model = QuotaWindowModel(provider: QuotaRealProvider(), refreshPolicy: .backgroundEvery60Seconds)
             model.onEvent = { [weak log] event in log?.write(event) }
             let controller = QuotaAnchoredButtonController(model: model, log: log)
@@ -763,6 +803,14 @@ private final class QuotaButtonAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        prepareHostCompatibility(source: "reopen")
+        DispatchQueue.main.async { [weak self] in
+            self?.controller?.refreshPositionAfterCompatibilityReopen()
+        }
+        return false
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         let workspace = NSWorkspace.shared.notificationCenter
         for observer in workspaceObservers { workspace.removeObserver(observer) }
@@ -772,6 +820,28 @@ private final class QuotaButtonAppDelegate: NSObject, NSApplicationDelegate {
         runtimeLog?.removePID()
         signalSource?.cancel()
         signalSource = nil
+    }
+
+    private func prepareHostCompatibility(source: String) {
+        #if !QUOTA_ANCHORED_TESTING
+        QuotaButtonProfile.hostCompatibility = .failure(
+            QuotaHostCompatibilityError.invalidConfiguration("host compatibility preparation is in progress")
+        )
+        do {
+            let registration = try QuotaHostCompatibility.prepareForApplicationLaunch(
+                hostInfoPlistURL: URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Info.plist")
+            )
+            QuotaButtonProfile.hostCompatibility = .success(registration.configuration)
+            runtimeLog?.write(
+                "host-compatibility outcome=\(registration.outcome.rawValue) source=\(source) " +
+                "initialized=\(registration.initializedExternalFile) build=\(registration.identity.buildVersion) " +
+                "version=\(registration.identity.shortVersion) profiles=\(registration.configuration.profiles.count)"
+            )
+        } catch {
+            QuotaButtonProfile.hostCompatibility = .failure(error)
+            runtimeLog?.write("host-compatibility outcome=failed source=\(source) reason=\(error)")
+        }
+        #endif
     }
 
     private func installTerminationSignalHandler() {

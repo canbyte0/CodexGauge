@@ -10,6 +10,44 @@ struct QuotaWindowLayoutCheck {
         }
 
         let visible = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let minimumHostSize = CGSize(width: 900, height: 700)
+        let mainWindow = CGRect(x: 120, y: 80, width: 1280, height: 900)
+        let smallPreview = CGRect(x: 900, y: 120, width: 400, height: 300)
+        check(QuotaWindowCandidateSelector.select(frames: [mainWindow], minimumSize: minimumHostSize) == .unique(index: 0),
+              "one main-sized window is selected")
+        check(QuotaWindowCandidateSelector.select(frames: [mainWindow, smallPreview], minimumSize: minimumHostSize) == .unique(index: 0),
+              "small preview after main window is ignored")
+        check(QuotaWindowCandidateSelector.select(frames: [smallPreview, mainWindow], minimumSize: minimumHostSize) == .unique(index: 1),
+              "small preview before main window is ignored")
+        check(QuotaWindowCandidateSelector.select(
+            frames: [smallPreview, CGRect(x: 20, y: 30, width: 800, height: 600)], minimumSize: minimumHostSize
+        ) == .none, "multiple small auxiliary windows do not become a candidate")
+        check(QuotaWindowCandidateSelector.select(frames: [smallPreview], minimumSize: minimumHostSize) == .none,
+              "only a small window remains hidden")
+        let secondMainWindow = CGRect(x: -1500, y: -800, width: 1000, height: 800)
+        check(QuotaWindowCandidateSelector.select(frames: [mainWindow, secondMainWindow], minimumSize: minimumHostSize) == .ambiguous,
+              "multiple main-sized windows remain ambiguous")
+        let boundaryWindow = CGRect(x: 0, y: 0, width: 900, height: 700)
+        check(QuotaWindowCandidateSelector.select(frames: [boundaryWindow], minimumSize: minimumHostSize) == .unique(index: 0),
+              "exact minimum size is eligible")
+        check(QuotaWindowCandidateSelector.select(
+            frames: [CGRect(x: 0, y: 0, width: 899.999, height: 700)], minimumSize: minimumHostSize
+        ) == .none, "frame below minimum width is excluded")
+        let invalidFrames = [
+            CGRect.null,
+            CGRect.zero,
+            CGRect(x: CGFloat.nan, y: 0, width: 1200, height: 900),
+            CGRect(x: 0, y: 0, width: CGFloat.infinity, height: 900)
+        ]
+        check(QuotaWindowCandidateSelector.select(frames: invalidFrames + [mainWindow], minimumSize: minimumHostSize) == .unique(index: 4),
+              "invalid frames are skipped without displacing the main window")
+        check(QuotaWindowCandidateSelector.select(frames: invalidFrames, minimumSize: minimumHostSize) == .none,
+              "invalid frames do not produce a candidate")
+        check(QuotaWindowCandidateSelector.select(frames: [secondMainWindow], minimumSize: minimumHostSize) == .unique(index: 0),
+              "a valid main window at negative coordinates is eligible")
+        check(QuotaWindowCandidateSelector.select(frames: [mainWindow], minimumSize: CGSize(width: CGFloat.nan, height: 700)) == .none,
+              "invalid minimum size fails closed")
+
         let summary = CGRect(x: 1240, y: 560, width: 88, height: 318)
         let expanded = QuotaWindowLayout.expandedFrame(
             from: summary,
@@ -65,7 +103,7 @@ struct QuotaWindowLayoutCheck {
         check(QuotaValueFormatter.progress(0) == 0, "zero percent has zero progress")
 
         if failures.isEmpty {
-            print("QuotaWindowLayoutCheck: PASS (22 assertions)")
+            print("QuotaWindowLayoutCheck: PASS (34 assertions)")
         } else {
             fputs("QuotaWindowLayoutCheck: FAIL\n" + failures.map { "- \($0)" }.joined(separator: "\n") + "\n", stderr)
             exit(1)

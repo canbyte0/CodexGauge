@@ -40,14 +40,62 @@ enum QuotaSidebarGlyphTier: Equatable {
 
     static func classify(remaining field: QuotaField<Double>, pending: Bool = false) -> Self {
         if pending { return .pending }
-        guard case .value(let remaining) = field else { return .unknown }
-        return classify(remaining: remaining)
+        return classify(remaining: validRemainingPercent(from: field))
+    }
+
+    static func validRemainingPercent(from field: QuotaField<Double>) -> Double? {
+        guard case .value(let remaining) = field,
+              remaining.isFinite, (0...100).contains(remaining) else { return nil }
+        return remaining
     }
 
     @MainActor
     static func current(for model: QuotaWindowModel) -> Self {
-        guard let snapshot = model.snapshot else { return .unknown }
-        return classify(remaining: snapshot.fiveHour.remaining, pending: model.expired(snapshot.fiveHour))
+        QuotaSidebarGlyphState.current(for: model).tier
+    }
+}
+
+struct QuotaSidebarGlyphState: Equatable {
+    let tier: QuotaSidebarGlyphTier
+    let remainingPercent: Double?
+    let isLastRecord: Bool
+
+    var accessibilityLabel: String {
+        QuotaSidebarGlyphValueFormatter.accessibilityLabel(
+            tier: tier, remainingPercent: remainingPercent, isLastRecord: isLastRecord
+        )
+    }
+
+    @MainActor
+    static func current(for model: QuotaWindowModel) -> Self {
+        guard let snapshot = model.snapshot else {
+            return Self(tier: .unknown, remainingPercent: nil, isLastRecord: false)
+        }
+
+        let remainingPercent = QuotaSidebarGlyphTier.validRemainingPercent(from: snapshot.fiveHour.remaining)
+        let tier = QuotaSidebarGlyphTier.classify(remaining: remainingPercent)
+        let isLastRecord = remainingPercent != nil && model.expired(snapshot.fiveHour)
+        return Self(tier: tier, remainingPercent: remainingPercent, isLastRecord: isLastRecord)
+    }
+}
+
+enum QuotaSidebarGlyphValueFormatter {
+    static func number(remainingPercent: Double?) -> String {
+        guard let remainingPercent, remainingPercent.isFinite,
+              (0...100).contains(remainingPercent) else { return "—" }
+        return String(QuotaRealParser.percent(.value(remainingPercent)).dropLast())
+    }
+
+    static func accessibilityLabel(
+        tier: QuotaSidebarGlyphTier, remainingPercent: Double?, isLastRecord: Bool
+    ) -> String {
+        let baseLabel: String
+        if let remainingPercent, remainingPercent.isFinite, (0...100).contains(remainingPercent) {
+            baseLabel = "额度；5h 剩余 \(QuotaRealParser.percent(.value(remainingPercent)))"
+        } else {
+            baseLabel = tier.accessibilityLabel
+        }
+        return isLastRecord ? "\(baseLabel)；上次记录，待更新" : baseLabel
     }
 }
 
@@ -55,19 +103,26 @@ enum QuotaSidebarGlyphGeometry {
     static let lineCount = 3
     static let lineWidth: CGFloat = 1.8
     static let dimmedOpacity = 0.30
+    static let renderSize: CGFloat = 36
 
     static func arc(in rect: CGRect) -> Path {
+        scaled(Path(ellipseIn: circleBounds), to: rect)
+    }
+
+    static func progressArc(in rect: CGRect, remainingPercent: Double?) -> Path {
+        guard let remainingPercent, remainingPercent.isFinite,
+              (0...100).contains(remainingPercent), remainingPercent > 0 else { return Path() }
+        if remainingPercent == 100 {
+            return scaled(Path(ellipseIn: circleBounds), to: rect)
+        }
+
         var path = Path()
-        path.move(to: CGPoint(x: 12, y: 3))
-        path.addCurve(to: CGPoint(x: 3, y: 12),
-                      control1: CGPoint(x: 7.0294, y: 3),
-                      control2: CGPoint(x: 3, y: 7.0294))
-        path.addCurve(to: CGPoint(x: 12, y: 21),
-                      control1: CGPoint(x: 3, y: 16.9706),
-                      control2: CGPoint(x: 7.0294, y: 21))
-        path.addCurve(to: CGPoint(x: 21, y: 12),
-                      control1: CGPoint(x: 16.9706, y: 21),
-                      control2: CGPoint(x: 21, y: 16.9706))
+        path.addRelativeArc(
+            center: CGPoint(x: 12, y: 12),
+            radius: 9,
+            startAngle: .degrees(-90),
+            delta: .degrees(360 * remainingPercent / 100)
+        )
         return scaled(path, to: rect)
     }
 
@@ -87,10 +142,19 @@ enum QuotaSidebarGlyphGeometry {
             tx: rect.minX, ty: rect.minY
         ))
     }
+
+    private static let circleBounds = CGRect(x: 3, y: 3, width: 18, height: 18)
 }
 
 private struct QuotaSidebarArcShape: Shape {
     func path(in rect: CGRect) -> Path { QuotaSidebarGlyphGeometry.arc(in: rect) }
+}
+
+private struct QuotaSidebarProgressShape: Shape {
+    let remainingPercent: Double?
+    func path(in rect: CGRect) -> Path {
+        QuotaSidebarGlyphGeometry.progressArc(in: rect, remainingPercent: remainingPercent)
+    }
 }
 
 private struct QuotaSidebarLineShape: Shape {
@@ -100,6 +164,12 @@ private struct QuotaSidebarLineShape: Shape {
 
 struct QuotaSidebarGlyph: View {
     let tier: QuotaSidebarGlyphTier
+    let remainingPercent: Double?
+
+    init(tier: QuotaSidebarGlyphTier, remainingPercent: Double? = nil) {
+        self.tier = tier
+        self.remainingPercent = remainingPercent
+    }
 
     private var tint: Color { Color(nsColor: .secondaryLabelColor) }
     private var strokeStyle: StrokeStyle {
@@ -109,13 +179,17 @@ struct QuotaSidebarGlyph: View {
     var body: some View {
         ZStack {
             QuotaSidebarArcShape()
+                .stroke(tint.opacity(QuotaSidebarGlyphGeometry.dimmedOpacity), style: strokeStyle)
+            QuotaSidebarProgressShape(remainingPercent: remainingPercent)
                 .stroke(tint, style: strokeStyle)
-            ForEach(0..<QuotaSidebarGlyphGeometry.lineCount, id: \.self) { index in
-                QuotaSidebarLineShape(index: index)
-                    .stroke(tint.opacity(tier.dimmedLineIndices.contains(index) ? QuotaSidebarGlyphGeometry.dimmedOpacity : 1), style: strokeStyle)
-            }
+            Text(QuotaSidebarGlyphValueFormatter.number(remainingPercent: remainingPercent))
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(tint)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: true)
         }
-        .frame(width: 24, height: 24)
+        .frame(width: QuotaSidebarGlyphGeometry.renderSize, height: QuotaSidebarGlyphGeometry.renderSize)
         .accessibilityHidden(true)
     }
 }
@@ -125,19 +199,19 @@ struct QuotaAnchorButtonView: View {
     @ObservedObject var model: QuotaWindowModel
     let action: () -> Void
 
-    private var tier: QuotaSidebarGlyphTier { QuotaSidebarGlyphTier.current(for: model) }
+    private var glyphState: QuotaSidebarGlyphState { QuotaSidebarGlyphState.current(for: model) }
 
     var body: some View {
         Button(action: action) {
-            QuotaSidebarGlyph(tier: tier)
-                .frame(width: 24, height: 24)
+            QuotaSidebarGlyph(tier: glyphState.tier, remainingPercent: glyphState.remainingPercent)
+                .frame(width: QuotaSidebarGlyphGeometry.renderSize, height: QuotaSidebarGlyphGeometry.renderSize)
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .frame(width: 44, height: 44)
         .contentShape(Rectangle())
-        .accessibilityLabel(tier.accessibilityLabel)
-        .help(tier.accessibilityLabel)
+        .accessibilityLabel(glyphState.accessibilityLabel)
+        .help(glyphState.accessibilityLabel)
     }
 }

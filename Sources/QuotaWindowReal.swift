@@ -413,26 +413,21 @@ struct DetailsView: View {
                                 .font(.system(size: displayMode == .anchoredCompact ? 13 : 12, design: .monospaced))
                         }
                         Spacer()
-                        if displayMode == .anchoredCompact {
-                            Button(action: onRefresh) {
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color.primary.opacity(0.08))
-                                        .frame(width: 36, height: 32)
-                                    Image(systemName: "arrow.clockwise")
-                                        .font(.system(size: 16, weight: .medium))
-                                }
-                                .frame(width: 40, height: 36)
-                                .contentShape(Rectangle())
+                        Button(action: onRefresh) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.primary.opacity(0.08))
+                                    .frame(width: 40, height: 36)
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 18, weight: .medium))
                             }
-                            .buttonStyle(.plain)
-                            .help(model.loading ? "刷新中" : "刷新额度")
-                            .accessibilityLabel(model.loading ? "刷新中" : "刷新额度")
-                            .disabled(model.loading)
-                        } else {
-                            Button(action: onRefresh) { Label(model.loading ? "刷新中" : "刷新额度", systemImage: "arrow.clockwise") }
-                                .buttonStyle(.bordered).controlSize(.small).disabled(model.loading)
+                            .frame(width: 44, height: 40)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .help(model.loading ? "刷新中" : "刷新额度")
+                        .accessibilityLabel(model.loading ? "刷新中" : "刷新额度")
+                        .disabled(model.loading)
                     }.padding(.vertical, 12)
                 }
                 .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 16)

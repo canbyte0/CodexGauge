@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
 APP_ICON="${PROJECT_ROOT}/Resources/AppIcon.icns"
+COMPATIBILITY_CONFIG="${PROJECT_ROOT}/Resources/QuotaHostCompatibility.json"
 REVISION_NAME="${QUOTA_BUTTON_REVISION:-a1-c1}"
 if [[ ! "${REVISION_NAME}" =~ ^a1-c[0-9]+$ ]]; then
   echo "Invalid QUOTA_BUTTON_REVISION: ${REVISION_NAME}" >&2
@@ -14,9 +15,22 @@ MODULE_CACHE="${REVISION_ROOT}/module-cache"
 BUILD_TEMP="${REVISION_ROOT}/build-temp"
 SWIFT_TARGET="arm64-apple-macosx14.0"
 FRAMEWORKS=(-framework AppKit -framework SwiftUI -framework CoreGraphics)
+LEGACY_PROFILE_VARIABLES=(
+  QUOTA_BUTTON_PROFILE_HOST_BUNDLE_IDENTIFIER
+  QUOTA_BUTTON_PROFILE_HOST_BUILD_VERSION
+  QUOTA_BUTTON_PROFILE_HOST_SHORT_VERSION
+  QUOTA_BUTTON_PROFILE_HOST_INFO_PLIST_SHA256
+)
+for variable_name in "${LEGACY_PROFILE_VARIABLES[@]}"; do
+  if [[ -n "${!variable_name:-}" ]]; then
+    echo "Legacy host-profile build parameter ${variable_name} is unsupported; update the bundled compatibility JSON instead." >&2
+    exit 2
+  fi
+done
 BUTTON_SOURCES=(
   "${PROJECT_ROOT}/Sources/QuotaWindowLayout.swift"
   "${PROJECT_ROOT}/Sources/QuotaCountdown.swift"
+  "${PROJECT_ROOT}/Sources/QuotaHostCompatibility.swift"
   "${PROJECT_ROOT}/Sources/QuotaSidebarGlyph.swift"
   "${PROJECT_ROOT}/Sources/QuotaRealData.swift"
   "${PROJECT_ROOT}/Sources/QuotaRealProvider.swift"
@@ -30,6 +44,10 @@ MOCK_HOST_SOURCES=("${PROJECT_ROOT}/Sources/QuotaButtonMockHost.swift")
 
 if [[ ! -f "${APP_ICON}" ]]; then
   echo "App icon not found; run bash scripts/generate-app-icon.sh: ${APP_ICON}" >&2
+  exit 1
+fi
+if [[ ! -f "${COMPATIBILITY_CONFIG}" ]]; then
+  echo "Default host compatibility resource is missing: ${COMPATIBILITY_CONFIG}" >&2
   exit 1
 fi
 
@@ -56,10 +74,9 @@ build_binary() {
     echo "swift_version=$(xcrun swiftc -version | tr '\n' ' ')"
     echo "sdk_version=$(xcrun --sdk macosx --show-sdk-version)"
     echo "builder_sha256=$(shasum -a 256 "${BASH_SOURCE[0]}" | awk '{print $1}')"
-    echo "quota_host_profile_bundle_identifier=${QUOTA_BUTTON_PROFILE_HOST_BUNDLE_IDENTIFIER:-unset}"
-    echo "quota_host_profile_build_version=${QUOTA_BUTTON_PROFILE_HOST_BUILD_VERSION:-unset}"
-    echo "quota_host_profile_short_version=${QUOTA_BUTTON_PROFILE_HOST_SHORT_VERSION:-unset}"
-    echo "quota_host_profile_info_plist_sha256=${QUOTA_BUTTON_PROFILE_HOST_INFO_PLIST_SHA256:-unset}"
+    echo "compatibility_resource=${COMPATIBILITY_CONFIG}"
+    echo "compatibility_resource_sha256=$(shasum -a 256 "${COMPATIBILITY_CONFIG}" | awk '{print $1}')"
+    echo "compatibility_schema_version=1"
     echo "command_argv_begin"
     for ((index = 0; index < ${#command[@]}; index++)); do
       printf 'argv[%02d]=%s\n' "${index}" "${command[${index}]}"
@@ -91,32 +108,13 @@ package_app() {
   local version="$5"
   local runtime_name="$6"
   local ui_element="true"
-  local host_profile_metadata=""
+  local compatibility_metadata=""
   if [[ "${bundle_id}" == "local.msl.QuotaButton.MockHost" ]]; then ui_element="false"; fi
-  if [[ "${bundle_id}" == "local.msl.QuotaButton.Anchored" ]]; then
-    local profile_requested=false
-    for variable_name in \
-      QUOTA_BUTTON_PROFILE_HOST_BUNDLE_IDENTIFIER \
-      QUOTA_BUTTON_PROFILE_HOST_BUILD_VERSION \
-      QUOTA_BUTTON_PROFILE_HOST_SHORT_VERSION \
-      QUOTA_BUTTON_PROFILE_HOST_INFO_PLIST_SHA256; do
-      if [[ -n "${!variable_name:-}" ]]; then profile_requested=true; fi
-    done
-    if [[ "${profile_requested}" == true ]]; then
-      : "${QUOTA_BUTTON_PROFILE_HOST_BUNDLE_IDENTIFIER:?missing host profile bundle identifier}"
-      : "${QUOTA_BUTTON_PROFILE_HOST_BUILD_VERSION:?missing host profile build version}"
-      : "${QUOTA_BUTTON_PROFILE_HOST_SHORT_VERSION:?missing host profile short version}"
-      : "${QUOTA_BUTTON_PROFILE_HOST_INFO_PLIST_SHA256:?missing host Info.plist SHA-256}"
-      host_profile_metadata=$(cat <<PROFILE_PLIST
-  <key>QuotaHostProfileBundleIdentifier</key><string>${QUOTA_BUTTON_PROFILE_HOST_BUNDLE_IDENTIFIER}</string>
-  <key>QuotaHostProfileBuildVersion</key><string>${QUOTA_BUTTON_PROFILE_HOST_BUILD_VERSION}</string>
-  <key>QuotaHostProfileShortVersion</key><string>${QUOTA_BUTTON_PROFILE_HOST_SHORT_VERSION}</string>
-  <key>QuotaHostProfileInfoPlistSHA256</key><string>${QUOTA_BUTTON_PROFILE_HOST_INFO_PLIST_SHA256}</string>
-PROFILE_PLIST
-)
-    fi
-  fi
   mkdir -p "${executable}/Contents/MacOS" "${executable}/Contents/Resources"
+  if [[ "${bundle_id}" == "local.msl.QuotaButton.Anchored" || "${bundle_id}" == "local.msl.QuotaButton.Mock" ]]; then
+    cp "${COMPATIBILITY_CONFIG}" "${executable}/Contents/Resources/QuotaHostCompatibility.json"
+    compatibility_metadata="  <key>QuotaHostCompatibilitySchemaVersion</key><integer>1</integer>"
+  fi
   cp "${binary}" "${executable}/Contents/MacOS/$(basename "${binary}")"
   cat > "${executable}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -135,7 +133,7 @@ PROFILE_PLIST
   <key>LSUIElement</key><${ui_element}/>
   <key>NSHighResolutionCapable</key><true/>
   <key>OverlayRuntimeDirectoryName</key><string>${runtime_name}</string>
-${host_profile_metadata}
+${compatibility_metadata}
 </dict>
 </plist>
 PLIST
@@ -177,10 +175,9 @@ package_app "${MOCK_HOST_APP}" "${BUILD_TEMP}/QuotaButtonMockHost" "local.msl.Qu
   echo "test_target_bundle_id=local.msl.QuotaButton.MockHost"
   echo "mock_host=${MOCK_HOST_APP}"
   echo "mock_host_bundle_id=local.msl.QuotaButton.MockHost"
-  echo "profile_host_bundle_identifier=${QUOTA_BUTTON_PROFILE_HOST_BUNDLE_IDENTIFIER:-unset}"
-  echo "profile_host_build_version=${QUOTA_BUTTON_PROFILE_HOST_BUILD_VERSION:-unset}"
-  echo "profile_host_short_version=${QUOTA_BUTTON_PROFILE_HOST_SHORT_VERSION:-unset}"
-  echo "profile_host_info_plist_sha256=${QUOTA_BUTTON_PROFILE_HOST_INFO_PLIST_SHA256:-unset}"
+  echo "compatibility_resource=${COMPATIBILITY_CONFIG}"
+  echo "compatibility_resource_sha256=$(shasum -a 256 "${COMPATIBILITY_CONFIG}" | awk '{print $1}')"
+  echo "compatibility_schema_version=1"
   echo "c6_candidate=build/independent-quota-window/revisions/w3-c6/candidates/QuotaWindow.app"
   echo "no_formal_host_launch=true"
 } > "${REVISION_ROOT}/${REVISION_NAME}-binding.txt"

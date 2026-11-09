@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "profiles": [
+    {
+      "bundleIdentifier": "com.openai.codex",
+      "buildVersion": "25241",
+      "shortVersion": "26.1103.31037",
+      "infoPlistSHA256": "bed7f5674232b8749daec398acd4c3edfc3b30ee1611ffeac6cd346c23fdc4ba"
+    }
+  ]
+}
